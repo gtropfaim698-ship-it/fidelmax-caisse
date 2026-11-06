@@ -40,11 +40,9 @@
   h1{font-size:26px;font-weight:700;line-height:1.15;letter-spacing:-.5px}
   p.sub{color:var(--muted);font-size:14px;line-height:1.5}
   .panel{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px}
-  #reader{width:100%;aspect-ratio:1;border-radius:22px;overflow:hidden;background:#0b0820;border:1px solid var(--line);position:relative}
-  #reader video{object-fit:cover!important;width:100%!important;height:100%!important}
-  #reader img, #reader__dashboard_section_csr span{display:none!important}
-  .frame{position:absolute;inset:0;pointer-events:none;display:grid;place-items:center}
-  .frame span{width:62%;aspect-ratio:1;border-radius:24px;box-shadow:0 0 0 999px rgba(11,8,32,.45);border:3px solid var(--gold)}
+  #reader{width:100%;min-height:260px;border-radius:22px;overflow:hidden;background:#0b0820;border:1px solid var(--line);position:relative}
+  #reader video{width:100%!important;height:auto!important;display:block}
+  #reader.live{border:3px solid var(--gold)}
   .placeholder{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:var(--muted);font-size:14px;padding:24px}
   .btn{appearance:none;border:0;border-radius:18px;padding:18px;font:700 17px Poppins,sans-serif;cursor:pointer;width:100%;
        background:var(--gold);color:#1b1240;box-shadow:0 10px 30px -10px rgba(255,196,61,.6);transition:transform .08s}
@@ -106,6 +104,7 @@
     <h1>Scanne la carte du client</h1>
     <div id="reader"><div class="placeholder" id="ph">Appuie sur « Activer la caméra » et vise le QR code de la carte Wallet.</div></div>
     <button class="btn" id="btnCam">📷 Activer la caméra</button>
+    <label class="btn ghost" id="btnPhoto" style="text-align:center;margin:0">📸 Prendre le QR code en photo<input id="photo" type="file" accept="image/*" capture="environment" hidden></label>
     <button class="btn ghost" id="btnManual">Saisir le code à la main</button>
     <div class="panel" id="manualBox" hidden>
       <label for="manual">Code de la carte</label>
@@ -201,23 +200,43 @@ async function startCam(){
   $('ph').hidden = true;
   $('btnCam').disabled = true;
   try {
-    scanner = scanner || new Html5Qrcode('reader', { verbose: false });
-    await scanner.start({ facingMode: 'environment' }, { fps: 12, qrbox: (w, h) => { const s = Math.floor(Math.min(w, h) * 0.62); return { width: s, height: s }; } },
-      (txt) => { onCode(txt); }, () => {});
-    if (!document.querySelector('#reader .frame')) {
-      const f = document.createElement('div'); f.className = 'frame'; f.innerHTML = '<span></span>'; $('reader').appendChild(f);
+    scanner = scanner || makeScanner();
+    const cfg = { fps: 15, videoConstraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } };
+    try {
+      await scanner.start({ facingMode: 'environment' }, cfg, (txt) => { onCode(txt); }, () => {});
+    } catch (e1) {
+      await scanner.start({ facingMode: 'environment' }, { fps: 15 }, (txt) => { onCode(txt); }, () => {});
     }
+    $('reader').classList.add('live');
     $('btnCam').hidden = true;
   } catch (e) {
     $('ph').hidden = false; $('btnCam').disabled = false;
     toast('Caméra refusée. Autorise la caméra dans les réglages du navigateur, ou saisis le code à la main.');
   }
 }
+function makeScanner(){
+  const opts = { verbose: false, experimentalFeatures: { useBarCodeDetectorIfSupported: true } };
+  if (typeof Html5QrcodeSupportedFormats !== 'undefined') opts.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+  return new Html5Qrcode('reader', opts);
+}
 async function stopCam(){
   try { if (scanner && scanner.isScanning) await scanner.stop(); } catch(e){}
   $('btnCam').hidden = false; $('btnCam').disabled = false; $('ph').hidden = false;
-  const f = document.querySelector('#reader .frame'); if (f) f.remove();
+  $('reader').classList.remove('live');
 }
+$('photo').addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  if (typeof Html5Qrcode === 'undefined') return toast('Le lecteur de QR code ne s\'est pas chargé.');
+  await stopCam();
+  try {
+    scanner = scanner || makeScanner();
+    const txt = await scanner.scanFile(f, false);
+    onCode(txt);
+  } catch (err) {
+    toast('Aucun QR code trouvé sur la photo. Rapproche-toi et évite les reflets.');
+  }
+});
 $('btnCam').onclick = startCam;
 $('btnManual').onclick = () => { $('manualBox').hidden = !$('manualBox').hidden; if (!$('manualBox').hidden) $('manual').focus(); };
 $('btnManualOk').onclick = () => { const v = $('manual').value.trim(); if (v) onCode(v); };
